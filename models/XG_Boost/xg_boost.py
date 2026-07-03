@@ -14,7 +14,7 @@ warnings.filterwarnings('ignore')
 np.random.seed(42)
 
 # ============ 1. LOAD DATA ============
-df = pd.read_csv('../data/final/final_mp_dataset.csv')  # Adjust path as needed
+df = pd.read_csv('../../data/final/final_mp_dataset.csv')  # Adjust path as needed
 
 print("Dataset loaded successfully!")
 print(f"Data shape: {df.shape}")
@@ -89,28 +89,25 @@ print(f"TimeSeriesSplit folds: {tscv.get_n_splits()}")
 
 # Define parameter distribution for RandomizedSearch
 param_dist = {
-    'n_estimators': [200, 300, 500, 700, 1000],
-    'max_depth': [3, 5, 7, 9, 11, 13],
-    'learning_rate': [0.01, 0.03, 0.05, 0.07, 0.1, 0.15],
-    'subsample': [0.6, 0.7, 0.8, 0.9, 1.0],
-    'colsample_bytree': [0.6, 0.7, 0.8, 0.9, 1.0],
-    'colsample_bylevel': [0.6, 0.7, 0.8, 0.9, 1.0],
+    'n_estimators': [200, 300, 500, 700],
+    'max_depth': [3, 5, 7, 9, 11],
+    'learning_rate': [0.01, 0.03, 0.05, 0.07, 0.1],
+    'subsample': [0.6, 0.7, 0.8, 0.9],
+    'colsample_bytree': [0.6, 0.7, 0.8, 0.9],
+    'colsample_bylevel': [0.6, 0.7, 0.8, 0.9],
     'min_child_weight': [1, 3, 5, 7],
-    'reg_alpha': [0, 0.01, 0.1, 0.5, 1.0],
-    'reg_lambda': [0.1, 0.5, 1.0, 1.5, 2.0],
-    'gamma': [0, 0.1, 0.2, 0.5, 1.0],  # Added
-    'max_delta_step': [0, 1, 2, 5],  # Added
-    'tree_method': ['auto', 'hist', 'approx'],  # Added
-    'grow_policy': ['depthwise', 'lossguide'],  # Added
-    'sampling_method': ['uniform', 'gradient_based']  # Added
+    'reg_alpha': [0, 0.01, 0.1, 0.5],
+    'reg_lambda': [0.1, 0.5, 1.0, 1.5],
+    'gamma': [0, 0.1, 0.2, 0.5],
+    'max_delta_step': [0, 1, 2]
 }
 
-# Base model
+# Base model - REMOVE early_stopping_rounds from here
 base_model = xgb.XGBRegressor(
     random_state=42,
     n_jobs=-1,
-    verbosity=0,
-    early_stopping_rounds=50  # Added early stopping
+    verbosity=0
+    # early_stopping_rounds removed - will be handled separately
 )
 
 # Randomized search with TimeSeriesSplit
@@ -118,12 +115,13 @@ print("Performing Randomized Search with TimeSeriesSplit (this may take several 
 random_search = RandomizedSearchCV(
     estimator=base_model,
     param_distributions=param_dist,
-    n_iter=30,
+    n_iter=20,  # Reduced for speed
     cv=tscv,  # Time series cross-validation
     scoring='neg_root_mean_squared_error',
     random_state=42,
     n_jobs=-1,
-    verbose=1
+    verbose=1,
+    error_score='raise'  # This will show errors immediately
 )
 
 random_search.fit(X_train, y_train)
@@ -141,13 +139,9 @@ print("="*50)
 # Use best parameters
 best_params = random_search.best_params_.copy()
 
-# Remove parameters that might cause issues with fit
-fit_params = {k: v for k, v in best_params.items() 
-              if k not in ['early_stopping_rounds', 'eval_metric']}
-
 # Create model with early stopping
 final_model = xgb.XGBRegressor(
-    **fit_params,
+    **best_params,
     n_estimators=1000,  # Start with large number, early stopping will find optimal
     random_state=42,
     n_jobs=-1,
@@ -466,10 +460,9 @@ try:
         plt.savefig(f'xgboost_shap_dependence_{feature}.png', dpi=300)
         plt.show()
     
-    # SHAP Waterfall Plot for one prediction (Hackathon judges love this)
+    # SHAP Waterfall Plot for one prediction
     print("\nCreating SHAP Waterfall Plot for a single prediction...")
     
-    # Choose a specific prediction (first test sample)
     sample_idx = 0
     plt.figure(figsize=(14, 8))
     shap.waterfall_plot(
