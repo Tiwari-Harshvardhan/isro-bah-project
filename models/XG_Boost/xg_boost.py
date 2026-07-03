@@ -1,8 +1,8 @@
 import pandas as pd
 import numpy as np
 import xgboost as xgb
-from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
-from sklearn.model_selection import RandomizedSearchCV
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score, mean_absolute_percentage_error
+from sklearn.model_selection import RandomizedSearchCV, TimeSeriesSplit
 from sklearn.inspection import permutation_importance
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -29,19 +29,7 @@ print(df.isnull().sum())
 df = df.dropna()
 print(f"\nData shape after removing NaN: {df.shape}")
 
-# ============ 2. DEFINE MAPE FUNCTION ============
-def mean_absolute_percentage_error(y_true, y_pred):
-    """Calculate MAPE (Mean Absolute Percentage Error)"""
-    mask = y_true != 0
-    y_true_filtered = y_true[mask]
-    y_pred_filtered = y_pred[mask]
-    
-    if len(y_true_filtered) == 0:
-        return np.nan
-    
-    return np.mean(np.abs((y_true_filtered - y_pred_filtered) / y_true_filtered)) * 100
-
-# ============ 3. PREPARE FEATURES AND TARGET ============
+# ============ 2. PREPARE FEATURES AND TARGET ============
 feature_columns = [
     'year',
     'population_density',
@@ -70,7 +58,7 @@ print(f"Target shape: {y.shape}")
 print("\nFeature names:")
 print(X.columns.tolist())
 
-# ============ 4. CHRONOLOGICAL SPLIT ============
+# ============ 3. CHRONOLOGICAL SPLIT ============
 train_mask = df['year'].between(2018, 2023)
 val_mask = df['year'] == 2024
 test_mask = df['year'] == 2025
@@ -87,13 +75,17 @@ print(f"Training set: {X_train.shape[0]} samples (2018-2023)")
 print(f"Validation set: {X_val.shape[0]} samples (2024)")
 print(f"Test set: {X_test.shape[0]} samples (2025)")
 
-# ============ 5. NO FEATURE SCALING (XGBoost handles this internally) ============
+# ============ 4. NO FEATURE SCALING ============
 print("\nUsing raw features (XGBoost handles scaling internally)")
 
-# ============ 6. HYPERPARAMETER TUNING WITH RANDOMIZED SEARCH ============
+# ============ 5. HYPERPARAMETER TUNING WITH TIME SERIES CV ============
 print("\n" + "="*50)
-print("Hyperparameter Tuning with RandomizedSearchCV")
+print("Hyperparameter Tuning with TimeSeriesSplit")
 print("="*50)
+
+# Create time series cross-validation
+tscv = TimeSeriesSplit(n_splits=3)
+print(f"TimeSeriesSplit folds: {tscv.get_n_splits()}")
 
 # Define parameter distribution for RandomizedSearch
 param_dist = {
@@ -104,24 +96,30 @@ param_dist = {
     'colsample_bytree': [0.6, 0.7, 0.8, 0.9, 1.0],
     'colsample_bylevel': [0.6, 0.7, 0.8, 0.9, 1.0],
     'min_child_weight': [1, 3, 5, 7],
-    'reg_alpha': [0, 0.01, 0.1, 0.5, 1.0],  # L1 regularization
-    'reg_lambda': [0.1, 0.5, 1.0, 1.5, 2.0]  # L2 regularization
+    'reg_alpha': [0, 0.01, 0.1, 0.5, 1.0],
+    'reg_lambda': [0.1, 0.5, 1.0, 1.5, 2.0],
+    'gamma': [0, 0.1, 0.2, 0.5, 1.0],  # Added
+    'max_delta_step': [0, 1, 2, 5],  # Added
+    'tree_method': ['auto', 'hist', 'approx'],  # Added
+    'grow_policy': ['depthwise', 'lossguide'],  # Added
+    'sampling_method': ['uniform', 'gradient_based']  # Added
 }
 
 # Base model
 base_model = xgb.XGBRegressor(
     random_state=42,
     n_jobs=-1,
-    verbosity=0
+    verbosity=0,
+    early_stopping_rounds=50  # Added early stopping
 )
 
-# Randomized search
-print("Performing Randomized Search (this may take several minutes)...")
+# Randomized search with TimeSeriesSplit
+print("Performing Randomized Search with TimeSeriesSplit (this may take several minutes)...")
 random_search = RandomizedSearchCV(
     estimator=base_model,
     param_distributions=param_dist,
-    n_iter=30,  # Number of parameter combinations to try
-    cv=3,       # 3-fold cross-validation
+    n_iter=30,
+    cv=tscv,  # Time series cross-validation
     scoring='neg_root_mean_squared_error',
     random_state=42,
     n_jobs=-1,
@@ -135,24 +133,88 @@ for param, value in random_search.best_params_.items():
     print(f"  {param}: {value}")
 print(f"\nBest CV RMSE: {-random_search.best_score_:.4f}°C")
 
-# Use best model
-model = random_search.best_estimator_
+# ============ 6. TRAIN FINAL MODEL WITH EARLY STOPPING ============
+print("\n" + "="*50)
+print("Training Final Model with Early Stopping")
+print("="*50)
+
+# Use best parameters
+best_params = random_search.best_params_.copy()
+
+# Remove parameters that might cause issues with fit
+fit_params = {k: v for k, v in best_params.items() 
+              if k not in ['early_stopping_rounds', 'eval_metric']}
+
+# Create model with early stopping
+final_model = xgb.XGBRegressor(
+    **fit_params,
+    n_estimators=1000,  # Start with large number, early stopping will find optimal
+    random_state=42,
+    n_jobs=-1,
+    verbosity=0
+)
+
+# Train with early stopping on validation set
+print("Training with early stopping on validation set...")
+final_model.fit(
+    X_train, y_train,
+    eval_set=[(X_train, y_train), (X_val, y_val)],
+    early_stopping_rounds=50,
+    verbose=False
+)
+
+print(f"Best iteration: {final_model.best_iteration}")
+print(f"Best score: {final_model.best_score:.4f}")
+
+# Use the model
+model = final_model
 
 # ============ 7. FEATURE IMPORTANCE ============
-# Built-in feature importance (gain type is generally more informative)
-importance_df = pd.DataFrame({
+# Multiple importance types from XGBoost booster
+booster = model.get_booster()
+
+# Get different importance types
+importance_gain = pd.DataFrame({
     'feature': feature_columns,
     'importance': model.feature_importances_
 }).sort_values('importance', ascending=False)
 
+# Get gain, cover, weight from native booster
+try:
+    importance_gain_native = pd.DataFrame({
+        'feature': list(booster.get_score(importance_type='gain').keys()),
+        'gain': list(booster.get_score(importance_type='gain').values())
+    }).sort_values('gain', ascending=False)
+    
+    importance_weight = pd.DataFrame({
+        'feature': list(booster.get_score(importance_type='weight').keys()),
+        'weight': list(booster.get_score(importance_type='weight').values())
+    }).sort_values('weight', ascending=False)
+    
+    importance_cover = pd.DataFrame({
+        'feature': list(booster.get_score(importance_type='cover').keys()),
+        'cover': list(booster.get_score(importance_type='cover').values())
+    }).sort_values('cover', ascending=False)
+    
+    print("\nNative XGBoost Importance Types:")
+    print("Gain (improvement in accuracy):")
+    print(importance_gain_native.head())
+    print("\nWeight (number of times feature used):")
+    print(importance_weight.head())
+    print("\nCover (average coverage of feature):")
+    print(importance_cover.head())
+    
+except Exception as e:
+    print(f"Native importance extraction failed: {e}")
+
 print("\nFeature Importance (Built-in - Gain):")
-print(importance_df)
+print(importance_gain)
 
 # Permutation Importance with more repeats
 print("\nCalculating permutation importance (n_repeats=30)...")
 perm_importance = permutation_importance(
     model, X_test, y_test, 
-    n_repeats=30,  # Increased for more stable estimates
+    n_repeats=30,
     random_state=42, 
     n_jobs=-1
 )
@@ -170,7 +232,7 @@ print(perm_importance_df)
 fig, axes = plt.subplots(1, 2, figsize=(14, 8))
 
 # Built-in importance
-axes[0].barh(importance_df['feature'], importance_df['importance'], color='blue', alpha=0.7)
+axes[0].barh(importance_gain['feature'], importance_gain['importance'], color='blue', alpha=0.7)
 axes[0].set_xlabel('Importance (Gain)')
 axes[0].set_title('XGBoost Built-in Feature Importance')
 axes[0].grid(True, alpha=0.3)
@@ -192,9 +254,12 @@ y_pred_train = model.predict(X_train)
 y_pred_val = model.predict(X_val)
 y_pred_test = model.predict(X_test)
 
+# Predict once and reuse
+all_predictions = model.predict(X)
+
 # ============ 9. EVALUATION FUNCTION ============
 def evaluate_predictions(y_true, y_pred, dataset_name):
-    """Calculate and print evaluation metrics including MAPE"""
+    """Calculate and print evaluation metrics"""
     rmse = np.sqrt(mean_squared_error(y_true, y_pred))
     mae = mean_absolute_error(y_true, y_pred)
     r2 = r2_score(y_true, y_pred)
@@ -214,7 +279,31 @@ metrics_train = evaluate_predictions(y_train, y_pred_train, "Training")
 metrics_val = evaluate_predictions(y_val, y_pred_val, "Validation")
 metrics_test = evaluate_predictions(y_test, y_pred_test, "Test")
 
-# ============ 10. VISUALIZATIONS ============
+# ============ 10. LEARNING CURVES ============
+print("\nGenerating learning curves...")
+
+# Get evaluation history from model
+eval_results = model.evals_result()
+
+train_rmse = eval_results['validation_0']['rmse']
+val_rmse = eval_results['validation_1']['rmse']
+
+plt.figure(figsize=(12, 6))
+epochs = range(1, len(train_rmse) + 1)
+plt.plot(epochs, train_rmse, label='Training RMSE', linewidth=2)
+plt.plot(epochs, val_rmse, label='Validation RMSE', linewidth=2)
+plt.axvline(x=model.best_iteration, color='r', linestyle='--', 
+            label=f'Best Iteration: {model.best_iteration}')
+plt.xlabel('Boosting Round')
+plt.ylabel('RMSE (°C)')
+plt.title('XGBoost Learning Curves')
+plt.legend()
+plt.grid(True, alpha=0.3)
+plt.tight_layout()
+plt.savefig('xgboost_learning_curves.png', dpi=300)
+plt.show()
+
+# ============ 11. VISUALIZATIONS ============
 
 # Plot 1: Actual vs Predicted (All sets)
 fig, axes = plt.subplots(1, 3, figsize=(15, 5))
@@ -266,9 +355,8 @@ plt.tight_layout()
 plt.savefig('xgboost_residuals_vs_predicted.png', dpi=300)
 plt.show()
 
-# Plot 4: Residuals vs Time (Test Set) - For detecting temporal drift
+# Plot 4: Residuals vs Time (Test Set)
 plt.figure(figsize=(14, 6))
-test_dates = df[test_mask]['year'].astype(str) + '-' + df[test_mask]['month'].astype(str)
 plt.scatter(range(len(residuals_test)), residuals_test, alpha=0.6, s=30)
 plt.axhline(y=0, color='r', linestyle='--', lw=2)
 plt.xlabel('Time Index (Test Set)')
@@ -285,7 +373,6 @@ district_mask = df['district'] == sample_district
 district_data = df[district_mask].sort_values(['year', 'month'])
 district_indices = district_mask.values
 
-# Get predictions for this district
 district_pred = model.predict(X[district_indices])
 
 plt.figure(figsize=(14, 6))
@@ -301,9 +388,8 @@ plt.tight_layout()
 plt.savefig('xgboost_timeseries.png', dpi=300)
 plt.show()
 
-# Plot 6: Time Series - Test Period Only (Demonstrates forecasting ability)
+# Plot 6: Time Series - Test Period Only
 plt.figure(figsize=(14, 6))
-# Get test period data for the sample district
 test_district_mask = (df['district'] == sample_district) & test_mask
 test_district_data = df[test_district_mask].sort_values(['year', 'month'])
 test_district_indices = test_district_mask.values
@@ -345,13 +431,13 @@ plt.tight_layout()
 plt.savefig('xgboost_diagnostics.png', dpi=300)
 plt.show()
 
-# ============ 11. SHAP SUMMARY PLOT (Added for Interpretability) ============
-print("\nGenerating SHAP Summary Plot...")
+# ============ 12. SHAP ANALYSIS ============
+print("\nGenerating SHAP Analysis...")
 
 try:
     import shap
     
-    # Use a smaller sample for SHAP (for speed)
+    # Use a smaller sample for SHAP
     sample_size = min(500, len(X_test))
     X_test_sample = X_test.sample(n=sample_size, random_state=42)
     
@@ -368,7 +454,7 @@ try:
     plt.show()
     
     # SHAP Dependence plots for top 3 features
-    top_features = importance_df['feature'].head(3).tolist()
+    top_features = importance_gain['feature'].head(3).tolist()
     print(f"\nCreating SHAP dependence plots for top 3 features: {top_features}")
     
     for feature in top_features:
@@ -380,38 +466,83 @@ try:
         plt.savefig(f'xgboost_shap_dependence_{feature}.png', dpi=300)
         plt.show()
     
-    print("SHAP plots saved successfully")
+    # SHAP Waterfall Plot for one prediction (Hackathon judges love this)
+    print("\nCreating SHAP Waterfall Plot for a single prediction...")
+    
+    # Choose a specific prediction (first test sample)
+    sample_idx = 0
+    plt.figure(figsize=(14, 8))
+    shap.waterfall_plot(
+        shap.Explanation(
+            values=shap_values[sample_idx],
+            base_values=explainer.expected_value,
+            data=X_test_sample.iloc[sample_idx],
+            feature_names=feature_columns
+        ),
+        show=False,
+        max_display=10
+    )
+    plt.title(f'SHAP Waterfall Plot - Prediction {sample_idx}\nActual: {y_test.iloc[sample_idx]:.2f}°C, Predicted: {model.predict(X_test.iloc[[sample_idx]])[0]:.2f}°C')
+    plt.tight_layout()
+    plt.savefig('xgboost_shap_waterfall.png', dpi=300)
+    plt.show()
+    
+    print("SHAP analysis complete!")
     
 except Exception as e:
-    print(f"SHAP analysis failed (optional library): {e}")
+    print(f"SHAP analysis failed: {e}")
     print("Continuing without SHAP plots...")
 
-# ============ 12. SAVE RESULTS ============
+# ============ 13. SAVE RESULTS ============
 
-# Save predictions
-results_df = pd.DataFrame({
+# Save predictions separately for each set
+train_results = pd.DataFrame({
+    'district': df[train_mask]['district'],
+    'year': df[train_mask]['year'],
+    'month': df[train_mask]['month'],
+    'actual_lst': y_train,
+    'predicted_lst': y_pred_train,
+    'residual': y_train - y_pred_train
+})
+train_results.to_csv('xgboost_train_predictions.csv', index=False)
+
+val_results = pd.DataFrame({
+    'district': df[val_mask]['district'],
+    'year': df[val_mask]['year'],
+    'month': df[val_mask]['month'],
+    'actual_lst': y_val,
+    'predicted_lst': y_pred_val,
+    'residual': y_val - y_pred_val
+})
+val_results.to_csv('xgboost_validation_predictions.csv', index=False)
+
+test_results = pd.DataFrame({
+    'district': df[test_mask]['district'],
+    'year': df[test_mask]['year'],
+    'month': df[test_mask]['month'],
+    'actual_lst': y_test,
+    'predicted_lst': y_pred_test,
+    'residual': y_test - y_pred_test
+})
+test_results.to_csv('xgboost_test_predictions.csv', index=False)
+
+# Save all predictions
+all_results = pd.DataFrame({
     'district': df['district'],
     'year': df['year'],
     'month': df['month'],
     'actual_lst': y,
-    'predicted_lst': model.predict(X),
-    'residual': y - model.predict(X)
+    'predicted_lst': all_predictions,
+    'residual': y - all_predictions
 })
-results_df.to_csv('xgboost_predictions.csv', index=False)
-print("\nPredictions saved to 'xgboost_predictions.csv'")
+all_results.to_csv('xgboost_predictions.csv', index=False)
+
+print("\nPredictions saved to CSV files")
 
 # Save feature importance
-importance_df.to_csv('xgboost_feature_importance.csv', index=False)
+importance_gain.to_csv('xgboost_feature_importance_gain.csv', index=False)
 perm_importance_df.to_csv('xgboost_permutation_importance.csv', index=False)
-print("Feature importance saved to 'xgboost_feature_importance.csv'")
-
-# Save model parameters (XGBoost has parameters, not coefficients)
-model_params = pd.DataFrame({
-    'parameter': list(model.get_params().keys()),
-    'value': [str(v) for v in model.get_params().values()]
-})
-model_params.to_csv('xgboost_model_parameters.csv', index=False)
-print("Model parameters saved to 'xgboost_model_parameters.csv'")
+print("Feature importance saved")
 
 # Save best hyperparameters
 best_params_df = pd.DataFrame({
@@ -419,7 +550,7 @@ best_params_df = pd.DataFrame({
     'value': list(random_search.best_params_.values())
 })
 best_params_df.to_csv('xgboost_best_hyperparameters.csv', index=False)
-print("Best hyperparameters saved to 'xgboost_best_hyperparameters.csv'")
+print("Best hyperparameters saved")
 
 # Save metrics
 metrics_df = pd.DataFrame({
@@ -433,22 +564,24 @@ metrics_df = pd.DataFrame({
 metrics_df.to_csv('xgboost_metrics.csv', index=False)
 print("Metrics saved to 'xgboost_metrics.csv'")
 
-# ============ 13. FINAL SUMMARY REPORT ============
+# ============ 14. FINAL SUMMARY REPORT ============
 print("\n" + "="*50)
 print("XGBOOST MODEL SUMMARY REPORT")
 print("="*50)
-print(f"Model Type: XGBoost Regressor (Hyperparameter Tuned)")
+print(f"Model Type: XGBoost Regressor (Hyperparameter Tuned with TimeSeriesCV + Early Stopping)")
 print(f"Number of Features: {len(feature_columns)}")
 print(f"Training Samples: {len(X_train)}")
 print(f"Validation Samples: {len(X_val)}")
 print(f"Test Samples: {len(X_test)}")
+print(f"Best Iteration (Early Stopping): {model.best_iteration}")
+print(f"Best Validation Score: {model.best_score:.4f}")
 
-print(f"\nBest Hyperparameters (from RandomizedSearchCV):")
+print(f"\nBest Hyperparameters (from RandomizedSearchCV with TimeSeriesSplit):")
 for param, value in random_search.best_params_.items():
     print(f"  {param}: {value}")
 
 print("\nTop 5 Most Important Features (Built-in - Gain):")
-for idx, row in importance_df.head(5).iterrows():
+for idx, row in importance_gain.head(5).iterrows():
     print(f"  {row['feature']:25s}: {row['importance']:.4f}")
 
 print("\nTop 5 Most Important Features (Permutation):")
@@ -466,7 +599,7 @@ print("\n" + "="*50)
 print("Model training and evaluation complete!")
 print("="*50)
 
-# ============ 14. LEAKAGE CHECK ============
+# ============ 15. LEAKAGE CHECK ============
 print("\n" + "="*50)
 print("DATA LEAKAGE CHECK")
 print("="*50)
