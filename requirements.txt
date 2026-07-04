@@ -4,3 +4,9 @@ geopandas
 rasterio
 lightgbm
 xgboost
+pystac-client 
+planetary-computer 
+rioxarray 
+xarray 
+shapely
+odc-stac
