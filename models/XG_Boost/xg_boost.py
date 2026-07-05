@@ -139,10 +139,15 @@ print("="*50)
 # Use best parameters
 best_params = random_search.best_params_.copy()
 
-# Create model with early stopping
+# Remove n_estimators from best_params to avoid duplication
+if 'n_estimators' in best_params:
+    best_params.pop('n_estimators')
+
+# Create model with early stopping parameters in constructor
 final_model = xgb.XGBRegressor(
     **best_params,
-    n_estimators=1000,  # Start with large number, early stopping will find optimal
+    n_estimators=1000,  # Start with large number
+    early_stopping_rounds=50,  # Move early_stopping_rounds here
     random_state=42,
     n_jobs=-1,
     verbosity=0
@@ -153,7 +158,6 @@ print("Training with early stopping on validation set...")
 final_model.fit(
     X_train, y_train,
     eval_set=[(X_train, y_train), (X_val, y_val)],
-    early_stopping_rounds=50,
     verbose=False
 )
 
