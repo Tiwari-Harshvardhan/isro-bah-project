@@ -1,0 +1,10 @@
+parameter,value
+subsample,0.6
+min_data_in_leaf,3
+learning_rate,0.03
+l2_leaf_reg,1
+iterations,500
+grow_policy,Depthwise
+depth,10
+colsample_bylevel,0.8
+border_count,32
