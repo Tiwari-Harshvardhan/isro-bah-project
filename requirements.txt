@@ -10,3 +10,8 @@ rioxarray
 xarray 
 shapely
 odc-stac
+rasterstats
+rioxarray
+tqdm
+psutil
+retry
