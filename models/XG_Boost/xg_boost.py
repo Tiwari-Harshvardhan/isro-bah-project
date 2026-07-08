@@ -8,6 +8,8 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from scipy import stats
 import warnings
+from pathlib import Path
+import joblib
 warnings.filterwarnings('ignore')
 
 # Set random seed for reproducibility
@@ -25,41 +27,100 @@ print(f"Date range: {df['year'].min()} - {df['year'].max()}")
 print("\nMissing values per column:")
 print(df.isnull().sum())
 
-# Remove rows with NaN values
-df = df.dropna()
-print(f"\nData shape after removing NaN: {df.shape}")
+# Remove rows with NaN values(only where target is missing)
+df = df[df['mean_lst_day_celsius'].notna()]
+print(f"\nData shape after removing rows with missing target: {df.shape}")
 
-# ============ 2. PREPARE FEATURES AND TARGET ============
+# ============ HANDLE MISSING VALUES IN FEATURES ============
+print("\n" + "="*50)
+print("HANDLING MISSING VALUES IN FEATURES")
+print("="*50)
+
+# For each feature column, apply appropriate imputation
+feature_columns_with_handling = {
+    'ndvi_lag1': 'forward_fill',
+    'ndvi_lag2': 'forward_fill',
+    'ndvi_3month_avg': 'rolling_mean',
+    'lst_3month_avg': 'rolling_mean',
+    'lst_12month_avg': 'rolling_mean',
+    'ndvi_change': 'forward_fill',
+    'builtup_ndvi': 'interaction',
+}
+
+# Group by ward for time series imputation
+for ward in df['ward'].unique():
+    ward_mask = df['ward'] == ward
+    ward_data = df[ward_mask].sort_values(['year', 'month'])
+    
+    # Forward fill lagged features
+    for col in ['ndvi_lag1', 'ndvi_lag2', 'ndvi_change']:
+        if col in df.columns:
+            df.loc[ward_mask, col] = ward_data[col].fillna(method='ffill')
+    
+    # Fill remaining NaN with 0 (for features where 0 makes sense)
+    for col in ['ndvi_lag1', 'ndvi_lag2', 'ndvi_change']:
+        if col in df.columns:
+            df.loc[ward_mask, col] = df.loc[ward_mask, col].fillna(0)
+
+# For rolling averages, fill with ward-wise mean
+for col in ['ndvi_3month_avg', 'lst_3month_avg', 'lst_12month_avg']:
+    if col in df.columns:
+        # First try forward fill within each ward
+        for ward in df['ward'].unique():
+            ward_mask = df['ward'] == ward
+            df.loc[ward_mask, col] = df.loc[ward_mask, col].fillna(method='ffill')
+        
+        # Fill remaining NaN with ward-wise mean
+        ward_means = df.groupby('ward')[col].mean()
+        for ward in df['ward'].unique():
+            ward_mask = df['ward'] == ward
+            if not ward_means.loc[ward] is None:
+                df.loc[ward_mask, col] = df.loc[ward_mask, col].fillna(ward_means.loc[ward])
+        
+        # Final fallback: fill with global mean
+        df[col] = df[col].fillna(df[col].mean())
+
+# For builtup_ndvi (interaction term), recompute if missing
+if 'builtup_ndvi' in df.columns:
+    # If builtup_ndvi is missing but built_up_percent and mean_ndvi exist
+    mask = df['builtup_ndvi'].isna()
+    if mask.any():
+        df.loc[mask, 'builtup_ndvi'] = (
+            df.loc[mask, 'built_up_percent'] * df.loc[mask, 'mean_ndvi']
+        )
+
+# For urban_intensity and heat_exposure_index, forward fill
+for col in ['urban_intensity', 'heat_exposure_index']:
+    if col in df.columns:
+        for ward in df['ward'].unique():
+            ward_mask = df['ward'] == ward
+            df.loc[ward_mask, col] = df.loc[ward_mask, col].fillna(method='ffill')
+        df[col] = df[col].fillna(df[col].mean())
+
 feature_columns = [
-    # Temporal features
     'year',
     'year_index',
-    'month',  # Keep month for seasonality, sin/cos will be added
-    
-    # Demographic features
+    'month',
     'population',
     'population_density',
     'area_sq_km',
-    
-    # Land cover features
     'built_up_percent',
-    
-    # Vegetation features
     'mean_ndvi',
     'ndvi_lag1',
     'ndvi_lag2',
     'ndvi_3month_avg',
     'ndvi_change',
-    
-    # LST features (lagged and rolling)
     'lst_3month_avg',
     'lst_12month_avg',
-    
-    # Derived features
     'builtup_ndvi',
     'urban_intensity',
     'heat_exposure_index',
 ]
+
+# Final check: count remaining missing values
+print("\nMissing values after feature engineering:")
+print(df[feature_columns].isnull().sum())
+print(f"\nFinal data shape: {df.shape}")
 
 X = df[feature_columns]
 y = df['mean_lst_day_celsius']  # Target variable
@@ -70,9 +131,11 @@ print("\nFeature names:")
 print(X.columns.tolist())
 
 # ============ 3. CHRONOLOGICAL SPLIT ============
-train_mask = df['year'].between(2018, 2023)
-val_mask = df['year'] == 2024
-test_mask = df['year'] == 2025
+# Data available: 2018-2022
+# Split: 2018-2020 for training, 2021 for validation, 2022 for testing
+train_mask = df['year'].between(2018, 2020)
+val_mask = df['year'] == 2021
+test_mask = df['year'] == 2022
 
 X_train = X[train_mask]
 y_train = y[train_mask]
@@ -82,9 +145,9 @@ X_test = X[test_mask]
 y_test = y[test_mask]
 
 print(f"\nData Split Summary:")
-print(f"Training set: {X_train.shape[0]} samples (2018-2023)")
-print(f"Validation set: {X_val.shape[0]} samples (2024)")
-print(f"Test set: {X_test.shape[0]} samples (2025)")
+print(f"Training set: {X_train.shape[0]} samples (2018-2020)")
+print(f"Validation set: {X_val.shape[0]} samples (2021)")
+print(f"Test set: {X_test.shape[0]} samples (2022)")
 
 # ============ 4. NO FEATURE SCALING ============
 print("\nUsing raw features (XGBoost handles scaling internally)")
@@ -95,7 +158,7 @@ print("Hyperparameter Tuning with TimeSeriesSplit")
 print("="*50)
 
 # Create time series cross-validation
-tscv = TimeSeriesSplit(n_splits=3)
+tscv = TimeSeriesSplit(n_splits=2)  
 print(f"TimeSeriesSplit folds: {tscv.get_n_splits()}")
 
 # Define parameter distribution for RandomizedSearch
@@ -464,7 +527,7 @@ try:
     import shap
     
     # Use a smaller sample for SHAP
-    sample_size = min(500, len(X_test))
+    sample_size = min(300, len(X_test))  # Reduced since test set is smaller
     X_test_sample = X_test.sample(n=sample_size, random_state=42)
     
     # Create SHAP explainer
@@ -567,6 +630,11 @@ all_results = pd.DataFrame({
 all_results.to_csv('xgboost_predictions.csv', index=False)
 
 print("\nPredictions saved to CSV files")
+
+backend_model_path = Path(__file__).resolve().parent.parent.parent / "backend" / "model" / "xgboost_model.pkl"
+backend_model_path.parent.mkdir(parents=True, exist_ok=True)
+joblib.dump(model, backend_model_path)
+print(f"Saved trained model to {backend_model_path}")
 
 # Save feature importance
 importance_gain.to_csv('xgboost_feature_importance_gain.csv', index=False)
