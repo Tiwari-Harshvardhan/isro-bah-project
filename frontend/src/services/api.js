@@ -7,4 +7,10 @@ const api = axios.create({
 
 export const fetchZones = () => api.get('/zones')
 export const fetchZoneSummary = (zone) => api.get(`/zone/${encodeURIComponent(zone)}`)
+export const fetchZoneHistory = (zone) => api.get(`/zone/${encodeURIComponent(zone)}/history`)
 export const predictZone = (payload) => api.post('/predict', payload)
+export const fetchGeoJson = () => api.get('/geo/geojson')
+export const explainPrediction = (payload) => api.post('/analysis/explain', payload)
+export const chatQuery = (payload) => api.post('/analysis/chat', payload)
+export const planBudget = (payload) => api.post('/budget/plan', payload)
+export const generateReport = (payload) => api.post('/report/generate', payload, { responseType: 'blob' })

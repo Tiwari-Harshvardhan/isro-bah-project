@@ -4,10 +4,10 @@ geopandas
 rasterio
 lightgbm
 xgboost
-pystac-client 
-planetary-computer 
-rioxarray 
-xarray 
+pystac-client
+planetary-computer
+rioxarray
+xarray
 shapely
 odc-stac
 rasterstats
@@ -15,3 +15,4 @@ rioxarray
 tqdm
 psutil
 retry
+fpdf

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { MapContainer, TileLayer, GeoJSON } from 'react-leaflet'
-import { fetchZones } from '../services/api'
+import { fetchGeoJson, fetchZones } from '../services/api'
 
 const zoneColors = ['#1f78b4', '#33a02c', '#ff7f00', '#6a3d9a', '#e31a1c', '#00acc1', '#c51b7d', '#8c564b']
 
@@ -12,8 +12,9 @@ const MapView = ({ onZoneSelect, selectedZone, onPredictionRequest }) => {
   useEffect(() => {
     const loadMapData = async () => {
       try {
-        const zoneResponse = await fetchZones()
+        const [zoneResponse, geojsonResponse] = await Promise.all([fetchZones(), fetchGeoJson()])
         setZones(zoneResponse.data)
+        setGeojson(geojsonResponse.data)
       } catch (error) {
         console.error(error)
       } finally {
@@ -43,11 +44,13 @@ const MapView = ({ onZoneSelect, selectedZone, onPredictionRequest }) => {
     layer.bindPopup(feature.properties.zone_name || 'Zone')
   }
 
+  const mapTitle = loading ? 'Loading zones…' : zones.length ? `${zones.length} zones` : 'Zone data unavailable'
+
   return (
     <div className="card map-card">
       <div className="card-title-row">
         <h3>Delhi Heat Map</h3>
-        <span>{loading ? 'Loading zones…' : `${zones.length} zones`}</span>
+        <span>{mapTitle}</span>
       </div>
       <MapContainer center={[28.6139, 77.2090]} zoom={10} className="leaflet-map">
         <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution="&copy; OpenStreetMap contributors" />

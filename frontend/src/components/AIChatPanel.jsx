@@ -1,0 +1,47 @@
+import { useMemo, useState } from 'react'
+
+const AIChatPanel = ({ analysis, onPrompt }) => {
+  const [query, setQuery] = useState('')
+  const [response, setResponse] = useState(null)
+  const [loading, setLoading] = useState(false)
+
+  const handleAsk = async () => {
+    if (!query.trim()) return
+    setLoading(true)
+    const answer = await onPrompt(query)
+    setResponse(answer)
+    setLoading(false)
+  }
+
+  const answerText = useMemo(() => {
+    if (!response) return 'Ask a question about zone heat, budgets, or mitigation.'
+    return response
+  }, [response])
+
+  return (
+    <div className="card ai-panel">
+      <div className="card-title-row">
+        <h3>AI Planning Assistant</h3>
+        <span>Ask for insights or budget planning</span>
+      </div>
+      <div className="ai-summary">
+        <p><strong>Prediction</strong>: {analysis?.prediction ?? '--'}°C</p>
+        <p><strong>Confidence</strong>: {analysis?.confidence ?? '--'}%</p>
+      </div>
+      <textarea
+        className="chat-input"
+        value={query}
+        placeholder="Which zone is hottest? Compare Shahdara and Rohini. Explain this prediction."
+        onChange={(event) => setQuery(event.target.value)}
+      />
+      <button className="primary-button" onClick={handleAsk} disabled={loading}>
+        {loading ? 'Thinking…' : 'Ask Assistant'}
+      </button>
+      <div className="chat-response">
+        <p>{answerText}</p>
+      </div>
+    </div>
+  )
+}
+
+export default AIChatPanel

@@ -30,3 +30,23 @@ class GeoSelectionResponse(BaseModel):
     zone: str | None
     ward: str | None
     geometry: dict | None
+
+
+class ChatRequest(BaseModel):
+    zone: str = Field(..., min_length=1)
+    year: int = Field(..., ge=2018)
+    month: int = Field(..., ge=1, le=12)
+    query: str = Field(..., min_length=1)
+
+
+class BudgetRequest(BaseModel):
+    budget: str = Field(..., min_length=1)
+    year: int = Field(..., ge=2018)
+    month: int = Field(..., ge=1, le=12)
+
+
+class ReportRequest(BaseModel):
+    zone: str = Field(..., min_length=1)
+    year: int = Field(..., ge=2018)
+    month: int = Field(..., ge=1, le=12)
+    budget: str | None = None

@@ -39,9 +39,28 @@ def predict(request: PredictionRequest) -> dict[str, object]:
         raise HTTPException(status_code=500, detail="Prediction failed") from exc
 
 
+@router.get("/zone/{zone_name}/history")
+def get_zone_history(zone_name: str) -> list[dict[str, object]]:
+    try:
+        history = prediction_service.csv_service.get_zone_history(zone_name)
+        return history.to_dict(orient="records")
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @router.post("/geo/select")
 def select_geometry(payload: GeoSelectionRequest) -> dict[str, object]:
     try:
         return geo_service.select_geometry(payload.longitude, payload.latitude)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/geo/geojson")
+def get_geojson() -> dict[str, object]:
+    try:
+        return geo_service.get_map_geojson()
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="GeoJSON generation failed") from exc
