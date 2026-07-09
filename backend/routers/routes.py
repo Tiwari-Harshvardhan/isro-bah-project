@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException
 
-from backend.api.schemas import GeoSelectionRequest, PredictionRequest
+from backend.routers.schemas import GeoSelectionRequest, PredictionRequest
 from backend.services.geo_service import GeoService
 from backend.services.prediction_service import PredictionService
 

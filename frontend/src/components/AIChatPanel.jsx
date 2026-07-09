@@ -1,9 +1,16 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
-const AIChatPanel = ({ analysis, onPrompt }) => {
+const AIChatPanel = ({ analysis, onPrompt, selectedZone, defaultResponse }) => {
   const [query, setQuery] = useState('')
   const [response, setResponse] = useState(null)
   const [loading, setLoading] = useState(false)
+
+  // Sync default responses from the parent (e.g. when budget allocation occurs)
+  useEffect(() => {
+    if (defaultResponse) {
+      setResponse(defaultResponse)
+    }
+  }, [defaultResponse])
 
   const handleAsk = async () => {
     if (!query.trim()) return
@@ -18,6 +25,17 @@ const AIChatPanel = ({ analysis, onPrompt }) => {
     return response
   }, [response])
 
+  if (!selectedZone) {
+    return (
+      <div className="card ai-panel placeholder-card">
+        <div className="card-title-row">
+          <h3>AI Planning Assistant</h3>
+        </div>
+        <p className="placeholder-text">Select a Delhi zone to activate the AI Planning Assistant.</p>
+      </div>
+    )
+  }
+
   return (
     <div className="card ai-panel">
       <div className="card-title-row">
@@ -29,14 +47,18 @@ const AIChatPanel = ({ analysis, onPrompt }) => {
         <p><strong>Confidence</strong>: {analysis?.confidence ?? '--'}%</p>
       </div>
       <textarea
+        rows={4}
         className="chat-input"
         value={query}
-        placeholder="Which zone is hottest? Compare Shahdara and Rohini. Explain this prediction."
+        disabled={loading}
+        placeholder="Ask the assistant: 'What caused high temperature?', 'How many trees should be planted?', 'What interventions help?'"
         onChange={(event) => setQuery(event.target.value)}
       />
-      <button className="primary-button" onClick={handleAsk} disabled={loading}>
-        {loading ? 'Thinking…' : 'Ask Assistant'}
-      </button>
+      <div className="ai-action-row">
+        <button className="primary-button" onClick={handleAsk} disabled={loading || !query.trim()}>
+          {loading ? 'Thinking…' : 'Ask Assistant'}
+        </button>
+      </div>
       <div className="chat-response">
         <p>{answerText}</p>
       </div>

@@ -16,3 +16,4 @@ tqdm
 psutil
 retry
 fpdf
+python-dotenv

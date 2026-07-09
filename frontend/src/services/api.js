@@ -14,3 +14,4 @@ export const explainPrediction = (payload) => api.post('/analysis/explain', payl
 export const chatQuery = (payload) => api.post('/analysis/chat', payload)
 export const planBudget = (payload) => api.post('/budget/plan', payload)
 export const generateReport = (payload) => api.post('/report/generate', payload, { responseType: 'blob' })
+export const fetchAssistant = (payload) => api.post('/assistant', payload)

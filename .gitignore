@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+ENV/
+env/
+.Python
+
+# Node
+node_modules/
+dist/
+build/
+
+# IDE
+.vscode/
+.ipynb_checkpoints/
+
+# Environment
+.env
+
+# Data and generated files
+backend/data/ai_report.pdf
+frontend/.env

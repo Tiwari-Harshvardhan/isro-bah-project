@@ -1,9 +1,9 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from backend.api.analysis_routes import router as analysis_router
-from backend.api.routes import router as api_router
-from backend.api.utility_routes import router as utility_router
+from backend.routers.analysis_routes import router as analysis_router
+from backend.routers.routes import router as api_router
+from backend.routers.utility_routes import router as utility_router
 from backend.config import logger
 
 app = FastAPI(title="UrbanCool AI", version="1.0.0")

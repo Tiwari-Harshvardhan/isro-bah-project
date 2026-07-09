@@ -50,3 +50,12 @@ class ReportRequest(BaseModel):
     year: int = Field(..., ge=2018)
     month: int = Field(..., ge=1, le=12)
     budget: str | None = None
+
+
+class AssistantRequest(BaseModel):
+    zone: str = Field(..., min_length=1)
+    prediction: dict = Field(...)
+    historical_data: list[dict] = Field(...)
+    zone_statistics: dict = Field(...)
+    question: str = Field(..., min_length=1)
+

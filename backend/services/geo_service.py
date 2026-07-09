@@ -31,44 +31,27 @@ class GeoService:
                         f"Shapefile not found at {self.shapefile_path} or alternate path {alt_path}"
                     )
             gdf = gpd.read_file(shapefile_path)
+            gdf["geometry"] = gdf.geometry.make_valid()
             if gdf.crs is None:
                 gdf = gdf.set_crs(epsg=4326, allow_override=True)
             self._gdf = gdf
         return self._gdf
 
     def _build_zone_name_mapping(self) -> dict[int, str]:
-        if self._zone_mapping is not None:
-            return self._zone_mapping
-
-        dataset = self.csv_service.load_dataset()
-        dataset = dataset.dropna(subset=["zone", "ward"]).copy()
-        zone_names = sorted(dataset["zone"].astype(str).unique())
-        ward_sets = {
-            zone_name: set(dataset[dataset["zone"] == zone_name]["ward"].astype(str).str.strip().str.lower().unique())
-            for zone_name in zone_names
+        return {
+            1: "Keshav Puram Zone",
+            2: "Shahdara South Zone",
+            3: "South Zone",
+            4: "City-Sadar Paharganj(SP) Zone",
+            5: "City-Sadar Paharganj(SP) Zone",
+            6: "Civil Lines Zone",
+            7: "Narela Zone",
+            8: "Rohini Zone",
+            9: "Central-Zone",
+            10: "West Zone",
+            11: "Karol Bagh Zone",
+            12: "Karol Bagh Zone",
         }
-
-        gdf = self.load_geodata().copy()
-        gdf["zone_id"] = gdf["zone"].astype(int)
-        gdf["area_norm"] = gdf["area"].astype(str).str.strip().str.lower()
-
-        mapping: dict[int, str] = {}
-        for zone_id in sorted(gdf["zone_id"].unique()):
-            zone_area_names = set(gdf[gdf["zone_id"] == zone_id]["area_norm"].dropna().unique())
-            best_match = None
-            best_score = 0
-            for zone_name, ward_set in ward_sets.items():
-                overlap = len(zone_area_names & ward_set)
-                if overlap > best_score:
-                    best_score = overlap
-                    best_match = zone_name
-            if best_match is not None and best_score > 0:
-                mapping[zone_id] = best_match
-            else:
-                mapping[zone_id] = f"Zone-{zone_id}"
-
-        self._zone_mapping = mapping
-        return self._zone_mapping
 
     def get_zone_names(self) -> list[str]:
         dataset = self.csv_service.load_dataset()

@@ -1,23 +1,23 @@
 import { useEffect, useState } from 'react'
 import Navbar from '../components/Navbar'
 import MapView from '../components/MapView'
-import InfoPanel from '../components/InfoPanel'
 import PredictionCard from '../components/PredictionCard'
 import ExplanationPanel from '../components/ExplanationPanel'
 import AIChatPanel from '../components/AIChatPanel'
 import BudgetPlanner from '../components/BudgetPlanner'
 import ZoneCharts from '../components/ZoneCharts'
-import { fetchZoneHistory, fetchZoneSummary, generateReport, explainPrediction, chatQuery, planBudget, predictZone } from '../services/api'
+import { fetchZoneHistory, fetchZoneSummary, generateReport, explainPrediction, planBudget, predictZone, fetchAssistant } from '../services/api'
 
 const Dashboard = () => {
-  const [selectedZone, setSelectedZone] = useState('Central-Zone')
+  const [selectedZone, setSelectedZone] = useState('')
+  const [zones, setZones] = useState([])
   const [summary, setSummary] = useState(null)
   const [prediction, setPrediction] = useState(null)
   const [analysis, setAnalysis] = useState(null)
   const [history, setHistory] = useState([])
-  const [loadingSummary, setLoadingSummary] = useState(true)
-  const [loadingPrediction, setLoadingPrediction] = useState(true)
-  const [loadingAnalysis, setLoadingAnalysis] = useState(true)
+  const [loadingSummary, setLoadingSummary] = useState(false)
+  const [loadingPrediction, setLoadingPrediction] = useState(false)
+  const [loadingAnalysis, setLoadingAnalysis] = useState(false)
   const [loadingReport, setLoadingReport] = useState(false)
   const [budgetResult, setBudgetResult] = useState(null)
   const [error, setError] = useState('')
@@ -32,12 +32,14 @@ const Dashboard = () => {
       setLoadingPrediction(true)
       setLoadingAnalysis(true)
       setError('')
+
       const [summaryRes, predictionRes, analysisRes, historyRes] = await Promise.all([
         fetchZoneSummary(zoneName),
         predictZone({ zone: zoneName, year: selectedYear, month: selectedMonth }),
         explainPrediction({ zone: zoneName, year: selectedYear, month: selectedMonth }),
         fetchZoneHistory(zoneName),
       ])
+
       setSummary(summaryRes.data)
       setPrediction(predictionRes.data)
       setAnalysis(analysisRes.data)
@@ -52,12 +54,25 @@ const Dashboard = () => {
   }
 
   useEffect(() => {
-    loadZoneData(selectedZone)
+    if (selectedZone) {
+      loadZoneData(selectedZone)
+    }
   }, [selectedZone])
 
+  const handleZonesLoaded = (loadedZones) => {
+    setZones(loadedZones)
+  }
+
   const handleChatPrompt = async (query) => {
+    if (!selectedZone) return 'Please select a Delhi zone first.'
     try {
-      const response = await chatQuery({ zone: selectedZone, year: selectedYear, month: selectedMonth, query })
+      const response = await fetchAssistant({
+        zone: selectedZone,
+        prediction: prediction,
+        historical_data: history,
+        zone_statistics: summary,
+        question: query
+      })
       setChatResponse(response.data.answer)
       return response.data.answer
     } catch (err) {
@@ -70,6 +85,11 @@ const Dashboard = () => {
     try {
       const response = await planBudget({ budget, year: selectedYear, month: selectedMonth })
       setBudgetResult(response.data)
+      
+      // Update assistant context if possible or let the user query it
+      // Let's print a toast or update chat response as requested in Point 10
+      const X = (response.data.estimated_population_benefited / 100000).toFixed(1)
+      setChatResponse(`This allocation cools approximately ${X} lakh residents while maximizing heat reduction.`)
     } catch (err) {
       setError('Budget planning failed.')
     }
@@ -79,11 +99,11 @@ const Dashboard = () => {
     try {
       setLoadingReport(true)
       const response = await generateReport({ zone: selectedZone, year: selectedYear, month: selectedMonth, budget: budgetResult?.budget || '' })
-      const blob = new Blob([response.data], { type: 'text/plain' })
+      const blob = new Blob([response.data], { type: 'application/pdf' })
       const url = window.URL.createObjectURL(blob)
       const link = document.createElement('a')
       link.href = url
-      link.download = `${selectedZone.replace(/\s+/g, '_')}_report.txt`
+      link.download = `${selectedZone.replace(/\s+/g, '_')}_report.pdf`
       document.body.appendChild(link)
       link.click()
       link.remove()
@@ -101,16 +121,19 @@ const Dashboard = () => {
       {error && <div className="toast">{error}</div>}
       <div className="dashboard-grid">
         <div className="left-panel">
-          <MapView onZoneSelect={setSelectedZone} selectedZone={selectedZone} onPredictionRequest={loadZoneData} />
-          <InfoPanel summary={summary} loading={loadingSummary} />
+          <MapView
+            onZoneSelect={setSelectedZone}
+            selectedZone={selectedZone}
+            onZonesLoaded={handleZonesLoaded}
+          />
           <ZoneCharts history={history} />
         </div>
         <div className="right-panel">
-          <PredictionCard prediction={prediction} loading={loadingPrediction} />
-          <ExplanationPanel analysis={analysis} loading={loadingAnalysis} />
-          <AIChatPanel analysis={analysis} onPrompt={handleChatPrompt} />
-          <BudgetPlanner budget={budgetResult?.budget} onAllocate={handleBudgetAllocation} />
-          <button className="primary-button report-button" onClick={handleGenerateReport} disabled={loadingReport}>
+          <PredictionCard prediction={prediction} loading={loadingPrediction} selectedZone={selectedZone} />
+          <ExplanationPanel analysis={analysis} loading={loadingAnalysis} selectedZone={selectedZone} />
+          <AIChatPanel analysis={analysis} onPrompt={handleChatPrompt} selectedZone={selectedZone} defaultResponse={chatResponse} />
+          <BudgetPlanner budget={budgetResult?.budget} onAllocate={handleBudgetAllocation} budgetResult={budgetResult} />
+          <button className="primary-button report-button" onClick={handleGenerateReport} disabled={loadingReport || !selectedZone}>
             {loadingReport ? 'Generating report…' : 'Generate Report'}
           </button>
         </div>

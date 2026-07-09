@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from typing import Any
-
 import pandas as pd
 
 from backend.services.csv_service import CSVService
@@ -15,18 +14,21 @@ class BudgetPlannerService:
 
     def plan_budget(self, budget: float, year: int, month: int) -> dict[str, Any]:
         dataset = self.csv_service.load_dataset()
-        latest = dataset.sort_values(['year', 'month']).groupby('zone').tail(1)
+        
+        # Group by zone and take the latest record for each zone to get latest stats
+        latest = dataset.sort_values(['year', 'month']).groupby('zone').tail(1).copy()
         latest = latest.dropna(subset=['zone'])
 
-        latest = latest.assign(
-            risk_score=lambda df: (
-                (df['mean_lst_day_celsius'] / 45) * 0.35 +
-                (df['population_density'] / 30000) * 0.25 +
-                (df['built_up_percent'] / 100) * 0.25 +
-                ((1 - df['mean_ndvi']) / 1) * 0.15
-            )
+        # Compute risk score considering LST, density, built-up, and NDVI
+        latest['risk_score'] = (
+            (latest['mean_lst_day_celsius'] / 45.0) * 0.35 +
+            (latest['population_density'] / 30000.0) * 0.25 +
+            (latest['built_up_percent'] / 100.0) * 0.25 +
+            ((1.0 - latest['mean_ndvi'].fillna(0.2)) / 1.0) * 0.15
         )
-        latest = latest.assign(priority_score=latest['risk_score'] * latest['population_density'])
+        
+        # Priority score integrates the risk and total population to be cooled
+        latest['priority_score'] = latest['risk_score'] * latest['population']
         latest = latest.sort_values('priority_score', ascending=False)
 
         total_priority = latest['priority_score'].sum()
